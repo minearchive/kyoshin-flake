@@ -1,0 +1,116 @@
+name: Weekly upstream update
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"   # 毎週月曜 03:00 UTC
+  workflow_dispatch:        # 手動実行も可
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            accept-flake-config = true
+
+      # ── 最新タグを取得 ─────────────────────────────────────────────
+      - name: Fetch latest upstream tag
+        id: tag
+        run: |
+          TAG=$(curl -fsSL \
+            "https://api.github.com/repos/ingen084/KyoshinEewViewerIngen/releases/latest" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            | jq -r .tag_name)
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Check current version
+        id: current
+        run: |
+          VER=$(grep 'version = ' flake.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if already up-to-date
+        if: steps.tag.outputs.tag == steps.current.outputs.version
+        run: |
+          echo "Already at ${{ steps.tag.outputs.tag }}, nothing to do."
+          exit 0
+
+      # ── flake.nix を新バージョンで書き換え ────────────────────────
+      - name: Update version and rev in flake.nix
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        env:
+          NEW: ${{ steps.tag.outputs.tag }}
+          OLD: ${{ steps.current.outputs.version }}
+        run: |
+          sed -i \
+            -e "s|version = \"${OLD}\"|version = \"${NEW}\"|g" \
+            -e "s|rev = \"${OLD}\"|rev = \"${NEW}\"|g" \
+            -e "s|-p:AssemblyVersion=${OLD}.0\"-p:AssemblyVersion=${NEW}.0\"|g" \
+            flake.nix
+          # AssemblyVersion の行は sed の文字列に . が含まれるので別途
+          sed -i "s|-p:AssemblyVersion=${OLD//./\\.}\.0\"|-p:AssemblyVersion=${NEW}.0\"|g" flake.nix
+
+      # ── ソースハッシュを取得 ────────────────────────────────────────
+      - name: Get source hash
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        id: srchash
+        env:
+          NEW: ${{ steps.tag.outputs.tag }}
+        run: |
+          # hash = "" にして nix build → エラーから got: のハッシュを抽出
+          sed -i 's|hash = "sha256-[^"]*"|hash = ""|' flake.nix
+          git add flake.nix deps.json   # nix flake は git-tracked ファイルしか見ない
+          HASH=$(nix build .#kyoshin-eew-viewer 2>&1 \
+            | grep -oP '(?<=got:\s{4})sha256-\S+' | head -1)
+          echo "hash=${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Write source hash into flake.nix
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        env:
+          HASH: ${{ steps.srchash.outputs.hash }}
+        run: |
+          sed -i "s|hash = \"\"|hash = \"${HASH}\"|" flake.nix
+
+      # ── deps.json を再生成 ─────────────────────────────────────────
+      - name: Regenerate deps.json
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        run: |
+          git add flake.nix
+          nix build .#packages.x86_64-linux.kyoshin-eew-viewer.fetch-deps
+          bash "$(readlink result)" ./deps.json
+
+      # ── ビルド確認 ─────────────────────────────────────────────────
+      - name: Build package
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        run: |
+          git add deps.json
+          nix build .#kyoshin-eew-viewer
+
+      # ── PR 作成 ────────────────────────────────────────────────────
+      - name: Create Pull Request
+        if: steps.tag.outputs.tag != steps.current.outputs.version
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: "update/${{ steps.tag.outputs.tag }}"
+          commit-message: "update to ${{ steps.tag.outputs.tag }}"
+          title: "update to ${{ steps.tag.outputs.tag }}"
+          body: |
+            アップストリーム ${{ steps.tag.outputs.tag }} へのアップデート。
+
+            - `flake.nix`: version / rev / hash / AssemblyVersion を更新
+            - `deps.json`: NuGet ロックファイルを再生成
+            - ビルド確認済み (`nix build .#kyoshin-eew-viewer`)
+
+            https://github.com/ingen084/KyoshinEewViewerIngen/releases/tag/${{ steps.tag.outputs.tag }}
+          labels: "dependencies"
+          delete-branch: true
