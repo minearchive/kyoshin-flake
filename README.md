@@ -11,7 +11,7 @@
 
 ```nix
 {
-  inputs.kyoshin-flake.url = "github:<your-user>/kyoshin-flake";
+  inputs.kyoshin-flake.url = "github:minearchive/kyoshin-flake";
 
   outputs = { nixpkgs, kyoshin-flake, ... }: {
     nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
@@ -61,7 +61,7 @@ journalctl --user -u kyoshin-eew-viewer -f
 ### 単発で試す
 
 ```bash
-nix run github:<your-user>/kyoshin-flake
+nix run github:minearchive/kyoshin-flake
 ```
 
 ### ローカルビルド
