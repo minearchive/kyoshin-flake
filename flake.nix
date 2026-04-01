@@ -69,7 +69,7 @@
 
         kyoshin-eew-viewer = pkgs.buildDotnetModule {
           pname = "kyoshin-eew-viewer";
-          version = "0.20.26";
+          version = "0.20.27";
 
           src = pkgs.fetchFromGitHub {
             owner = "ingen084";
@@ -88,7 +88,7 @@
           dotnetFlags = [
             "-p:PublishReadyToRun=true"
             "-p:InvariantGlobalization=false"
-            "-p:AssemblyVersion=0.20.26.0"
+            "-p:AssemblyVersion=0.20.27.0"
           ];
 
           executables = [ "KyoshinEewViewer.Desktop" ];
